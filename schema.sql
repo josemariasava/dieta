@@ -13,14 +13,14 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from membri where lower(email) = lower(auth.jwt() ->> 'email'));
 $$;
 
--- Nomi, altezza e peso obiettivo di ciascuno (p1 = Jose, p2 = lei)
+-- Nomi, altezza e peso obiettivo di ciascuno (p1 = Jose, p2 = Annalisa)
 create table if not exists profili (
   persona text primary key check (persona in ('p1', 'p2')),
   nome text not null,
   altezza_cm numeric(5,1),
   peso_obiettivo numeric(5,1)
 );
-insert into profili (persona, nome) values ('p1', 'Jose'), ('p2', 'Lei')
+insert into profili (persona, nome) values ('p1', 'Jose'), ('p2', 'Annalisa')
 on conflict do nothing;
 
 -- Piano alimentare del nutrizionista

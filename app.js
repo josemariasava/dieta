@@ -57,7 +57,7 @@ const STATI = [['fatto', 'Fatto'], ['sgarro', 'Sgarro'], ['saltato', 'Saltato']]
 const nome = (p) => {
   if (p === 'entrambi') return 'Entrambi';
   if (p === 'insieme') return 'Insieme';
-  return state.profili[p]?.nome || (p === 'p1' ? 'Jose' : 'Lei');
+  return state.profili[p]?.nome || (p === 'p1' ? 'Jose' : 'Annalisa');
 };
 const who = (p) => `<span class="who ${esc(p)}">${esc(nome(p))}</span>`;
 const options = (values, selected, label = (v) => v) =>
@@ -80,6 +80,13 @@ const ORDINE = {
 const NUOVE = new Set(['diario', 'visite']);
 
 function toast(msg) {
+  // Con le impostazioni aperte il messaggio va dentro la finestra, altrimenti resta nascosto sotto
+  if ($('#settings').open) {
+    const m = $('#settings-msg');
+    m.textContent = msg;
+    m.hidden = false;
+    return;
+  }
   const t = $('#toast');
   t.textContent = msg;
   t.hidden = false;
@@ -731,11 +738,12 @@ const ACTIONS = {
         <legend class="who ${p}">${p === 'p1' ? 'Persona 1' : 'Persona 2'}</legend>
         <label for="st-nome-${p}">Nome</label><input id="st-nome-${p}" name="nome-${p}" value="${esc(pr.nome || nome(p))}" required>
         <div class="form-grid">
-          <div class="field"><label for="st-alt-${p}">Altezza (cm)</label><input id="st-alt-${p}" name="alt-${p}" type="number" step="0.5" min="100" max="230" value="${pr.altezza_cm ?? ''}"></div>
-          <div class="field"><label for="st-obj-${p}">Peso obiettivo (kg)</label><input id="st-obj-${p}" name="obj-${p}" type="number" step="0.1" min="30" max="250" value="${pr.peso_obiettivo ?? ''}"></div>
+          <div class="field"><label for="st-alt-${p}">Altezza (cm)</label><input id="st-alt-${p}" name="alt-${p}" type="number" inputmode="decimal" step="any" min="100" max="230" value="${pr.altezza_cm ?? ''}"></div>
+          <div class="field"><label for="st-obj-${p}">Peso obiettivo (kg)</label><input id="st-obj-${p}" name="obj-${p}" type="number" inputmode="decimal" step="any" min="30" max="250" value="${pr.peso_obiettivo ?? ''}"></div>
         </div>
       </fieldset>`;
     }).join('');
+    $('#settings-msg').hidden = true;
     $('#settings').showModal();
   },
   async logout() {
