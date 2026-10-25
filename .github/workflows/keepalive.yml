@@ -1,0 +1,37 @@
+# Tiene sveglio il progetto Supabase gratuito (va in pausa dopo 7 giorni senza attività).
+name: Tieni attivo Supabase
+
+on:
+  schedule:
+    - cron: '17 7 */3 * *'   # ogni 3 giorni alle 07:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Chiama il database
+        run: |
+          URL=$(grep -oP "supabaseUrl: '\K[^']+" config.js)
+          KEY=$(grep -oP "supabaseAnonKey: '\K[^']+" config.js)
+          curl -fsS -X POST "$URL/rest/v1/rpc/ping" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" -d '{}'
+          echo
+
+      # GitHub sospende le automazioni dei repository pubblici fermi da 60 giorni:
+      # una volta al mese aggiungo un commit vuoto per evitarlo.
+      - name: Commit mensile
+        if: github.event_name == 'schedule'
+        run: |
+          if [ "$(date -u +%d)" = "01" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "Promemoria mensile: automazione ancora attiva"
+            git push
+          fi
