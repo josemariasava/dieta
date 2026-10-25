@@ -95,14 +95,14 @@ main {
 }
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   background: var(--surface);
   border-top: 1px solid var(--line);
   padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
 }
 .tabbar button {
   border: 0; background: none; color: var(--muted);
-  font: 700 .82rem var(--font-body); padding: 10px 4px; border-radius: 10px; cursor: pointer;
+  font: 700 .8rem var(--font-body); padding: 10px 2px; border-radius: 10px; cursor: pointer;
 }
 .tabbar button[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
 
@@ -144,7 +144,7 @@ input:focus-visible, select:focus-visible, button:focus-visible, textarea:focus-
 .form-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); align-items: end; }
 .form-grid .field { display: grid; gap: 4px; }
 .form-grid .wide { grid-column: 1 / -1; }
-.row-end { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.row-end { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row-between { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 .hero { display: grid; gap: 4px; padding-top: 4px; }
@@ -234,3 +234,22 @@ dialog::backdrop { background: rgb(0 0 0 / .4); }
 @media (prefers-reduced-motion: no-preference) {
   .bar span { transition: width .4s ease; }
 }
+
+/* Diario, visite, avvisi */
+textarea { resize: vertical; min-height: 64px; }
+.banner { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 10px 14px; font-size: .9rem; }
+.panel.next { border-color: var(--accent); background: var(--accent-soft); }
+.small-btn { padding: 6px 12px; font-size: 1rem; line-height: 1; }
+.diary { display: grid; gap: 4px; }
+.diary.p-p1 h3, .who-name.p-p1 { color: var(--p1); }
+.diary.p-p2 h3, .who-name.p-p2 { color: var(--p2); }
+.diary .list li { gap: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; overflow: hidden; flex: none; }
+.seg-btn {
+  border: 0; background: var(--surface); color: var(--muted);
+  font: 700 .75rem var(--font-body); padding: 7px 9px; cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn.s-fatto[aria-pressed="true"] { background: var(--good); color: var(--surface); }
+.seg-btn.s-sgarro[aria-pressed="true"] { background: var(--bad); color: var(--surface); }
+.seg-btn.s-saltato[aria-pressed="true"] { background: var(--muted); color: var(--surface); }

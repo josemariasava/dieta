@@ -7,6 +7,11 @@
 <meta name="theme-color" content="#f4f6f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121613" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Diario">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%233d7a57'/%3E%3Cpath d='M10 20c2-8 8-11 13-11-1 6-5 12-13 11z' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -48,6 +53,7 @@
       <button data-tab="spesa">Spesa</button>
       <button data-tab="spese">Spese</button>
       <button data-tab="peso">Peso</button>
+      <button data-tab="visite">Visite</button>
     </nav>
   </div>
 
@@ -58,6 +64,12 @@
       <div class="row-end">
         <button class="btn" value="cancel" formnovalidate>Chiudi</button>
         <button class="btn primary" type="submit" value="save">Salva</button>
+      </div>
+      <hr>
+      <div class="person-settings">
+        <h3>Backup</h3>
+        <p class="small muted">Scarica tutti i dati in un file Excel, un foglio per sezione. Fatelo ogni tanto: il piano gratuito di Supabase non conserva copie.</p>
+        <button class="btn" type="button" data-action="esporta">Esporta tutti i dati (Excel)</button>
       </div>
       <hr>
       <button class="btn ghost" type="button" data-action="logout">Esci dall'account</button>

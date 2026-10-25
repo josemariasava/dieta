@@ -14,14 +14,20 @@ const kg = (n) => (n == null ? '—' : `${num1(n)} kg`);
 const sum = (arr) => arr.reduce((a, b) => a + Number(b || 0), 0);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const isoToday = () => {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
+const pad = (n) => String(n).padStart(2, '0');
+const localIso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const isoToday = () => localIso(new Date());
+const shiftDay = (iso, n) => {
+  const d = new Date(iso + 'T00:00');
+  d.setDate(d.getDate() + n);
+  return localIso(d);
 };
-const todayWeekday = () => ((new Date().getDay() + 6) % 7) + 1;
+const weekdayOf = (iso) => ((new Date(iso + 'T00:00').getDay() + 6) % 7) + 1;
+const todayWeekday = () => weekdayOf(isoToday());
 const fmtDay = (d) => d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
 const fmtDate = (s) => fmtDay(new Date(s + 'T00:00'));
+const fmtLong = (s) => capital(new Date(s + 'T00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }));
+const segno = (d) => (d === 0 ? 'stabile' : `${d < 0 ? '−' : '+'}${kg(Math.abs(d))}`);
 const fmtMonth = (ym) => capital(new Date(ym + '-01T00:00').toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }));
 const shiftMonth = (ym, dir) => {
   const d = new Date(ym + '-01T00:00');
@@ -34,13 +40,19 @@ const state = {
   giorno: todayWeekday(),
   filtro: 'tutti',
   mese: isoToday().slice(0, 7),
+  diarioData: isoToday(),
   ultimo: { persona: 'entrambi', momento: 'Colazione' },
+  mancaMigrazione: false,
   profili: {},
   pasti: [],
   spesa: [],
   spese: [],
-  pesate: []
+  pesate: [],
+  diario: [],
+  visite: []
 };
+
+const STATI = [['fatto', 'Fatto'], ['sgarro', 'Sgarro'], ['saltato', 'Saltato']];
 
 const nome = (p) => {
   if (p === 'entrambi') return 'Entrambi';
@@ -60,8 +72,12 @@ const ORDINE = {
   pasti: ['id', true],
   spesa: ['id', true],
   spese: ['data', false],
-  pesate: ['data', true]
+  pesate: ['data', true],
+  diario: ['data', true],
+  visite: ['data', false]
 };
+// Tabelle aggiunte da migrazione-02.sql: se mancano, l'app funziona lo stesso
+const NUOVE = new Set(['diario', 'visite']);
 
 function toast(msg) {
   const t = $('#toast');
@@ -90,24 +106,68 @@ async function run(query) {
 }
 
 async function load(table) {
+  if (table === 'profili') {
+    const rows = await run(sb.from('profili').select('*'));
+    state.profili = Object.fromEntries(rows.map((p) => [p.persona, p]));
+    return;
+  }
   const [col, asc] = ORDINE[table];
   let q = sb.from(table).select('*').order(col, { ascending: asc });
-  if (table === 'spese' || table === 'pesate') q = q.order('id', { ascending: true });
+  if (col !== 'id') q = q.order('id', { ascending: true });
+  if (NUOVE.has(table)) {
+    const { data, error } = await q;
+    if (error) {
+      console.warn(error);
+      state.mancaMigrazione = true;
+      state[table] = [];
+      return;
+    }
+    state[table] = data;
+    return;
+  }
   state[table] = await run(q);
 }
 
 async function loadAll() {
-  const [profili] = await Promise.all([
-    run(sb.from('profili').select('*')),
-    ...Object.keys(ORDINE).map(load)
-  ]);
-  state.profili = Object.fromEntries(profili.map((p) => [p.persona, p]));
+  state.mancaMigrazione = false;
+  await Promise.all(['profili', ...Object.keys(ORDINE)].map(load));
   render();
 }
 
 async function reload(table) {
   await load(table);
   render();
+}
+
+/* Tempo reale: quando l'altra persona modifica qualcosa, ricarico quella tabella.
+   Se state scrivendo in un campo, aspetto che finiate prima di ridisegnare. */
+let renderInSospeso = false;
+const staScrivendo = () => {
+  const a = document.activeElement;
+  return !!a && $('#view').contains(a) && a.matches('input:not([type="checkbox"]), textarea, select');
+};
+function softRender() {
+  if (staScrivendo()) renderInSospeso = true;
+  else render();
+}
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (renderInSospeso && !staScrivendo()) {
+    renderInSospeso = false;
+    render();
+  }
+}, 0));
+
+let canale = null;
+const timers = {};
+function ascolta() {
+  if (canale) return;
+  canale = sb.channel('modifiche')
+    .on('postgres_changes', { event: '*', schema: 'public' }, ({ table }) => {
+      if (table !== 'profili' && !ORDINE[table]) return;
+      clearTimeout(timers[table]);
+      timers[table] = setTimeout(() => load(table).then(softRender).catch(() => {}), 300);
+    })
+    .subscribe();
 }
 
 /* ---------- Views ---------- */
@@ -117,12 +177,31 @@ function firstDate() {
   return dates[0] || null;
 }
 
+function aderenza(p, from, to) {
+  const r = state.diario.filter((x) => x.persona === p && x.data >= from && x.data <= to);
+  if (!r.length) return null;
+  return {
+    pct: Math.round((100 * r.filter((x) => x.stato === 'fatto').length) / r.length),
+    n: r.length,
+    sgarri: r.filter((x) => x.stato === 'sgarro').length
+  };
+}
+
+function weightAt(p, iso) {
+  const w = state.pesate.filter((x) => x.persona === p && x.data <= iso);
+  return w.length ? Number(w[w.length - 1].peso_kg) : null;
+}
+
 function personCard(p) {
   const w = state.pesate.filter((x) => x.persona === p);
   const prof = state.profili[p] || {};
+  const a = aderenza(p, shiftDay(isoToday(), -6), isoToday());
+  const settimana = a
+    ? `<p class="small">Piano seguito negli ultimi 7 giorni: <strong>${a.pct}%</strong> <span class="muted">(${a.n} ${a.n === 1 ? 'pasto segnato' : 'pasti segnati'})</span></p>`
+    : '';
   if (!w.length) {
     return `<article class="pcard p-${p}"><h3>${esc(nome(p))}</h3>
-      <p class="muted small">Nessuna pesata ancora. Registra il peso di partenza nella sezione Peso.</p></article>`;
+      <p class="muted small">Nessuna pesata ancora. Registra il peso di partenza nella sezione Peso.</p>${settimana}</article>`;
   }
   const first = Number(w[0].peso_kg);
   const last = Number(w[w.length - 1].peso_kg);
@@ -142,16 +221,114 @@ function personCard(p) {
     const cat = v < 18.5 ? 'sottopeso' : v < 25 ? 'normopeso' : v < 30 ? 'sovrappeso' : 'obesità';
     bmi = `<div><p class="label">IMC</p><p class="num"><strong>${num1(v)}</strong> <span class="small muted">${cat}</span></p></div>`;
   }
-  const deltaTxt = delta === 0 ? 'stabile' : `${delta < 0 ? '−' : '+'}${kg(Math.abs(delta))}`;
   return `<article class="pcard p-${p}">
     <h3>${esc(nome(p))}</h3>
     <div class="stats">
       <div><p class="label">Peso attuale</p><p class="big">${kg(last)}</p></div>
-      <div><p class="label">Dall'inizio</p><p class="delta ${delta < 0 ? 'good' : delta > 0 ? 'bad' : ''}">${deltaTxt}</p></div>
+      <div><p class="label">Dall'inizio</p><p class="delta ${delta < 0 ? 'good' : delta > 0 ? 'bad' : ''}">${segno(delta)}</p></div>
       ${bmi}
     </div>
     ${progress}
+    ${settimana}
   </article>`;
+}
+
+function diarioPanel() {
+  const data = state.diarioData;
+  const oggi = isoToday();
+  const g = weekdayOf(data);
+  const titolo = data === oggi ? 'oggi' : data === shiftDay(oggi, -1) ? 'ieri' : fmtLong(data).toLowerCase();
+  const blocchi = PERSONE.map((p) => {
+    const previsti = MOMENTI.filter((m) => state.pasti.some((x) => x.giorno === g && x.momento === m && (x.persona === p || x.persona === 'entrambi')));
+    const momenti = previsti.length ? previsti : MOMENTI;
+    return `<div class="diary p-${p}"><h3>${esc(nome(p))}</h3><ul class="list">${momenti.map((m) => {
+      const r = state.diario.find((x) => x.persona === p && x.data === data && x.momento === m);
+      return `<li>
+        <span class="grow">${esc(m)}${r?.nota ? `<span class="note">${esc(r.nota)}</span>` : ''}</span>
+        <span class="seg" role="group" aria-label="${esc(m)} di ${esc(nome(p))}">${STATI.map(([s, l]) =>
+          `<button class="seg-btn s-${s}" data-action="diario" data-p="${p}" data-m="${esc(m)}" data-s="${s}" aria-pressed="${r?.stato === s}">${l}</button>`).join('')}</span>
+      </li>`;
+    }).join('')}</ul></div>`;
+  }).join('');
+  return `<section class="panel">
+    <div class="panel-head">
+      <h2>Diario di ${esc(titolo)}</h2>
+      <span class="row-end">
+        <button class="btn small-btn" data-action="diario-giorno" data-dir="-1" aria-label="Giorno precedente">‹</button>
+        ${data < oggi ? '<button class="btn small-btn" data-action="diario-giorno" data-dir="1" aria-label="Giorno successivo">›</button>' : ''}
+      </span>
+    </div>
+    <p class="small muted">Segnate com'è andato ogni pasto. Toccate di nuovo lo stesso pulsante per annullare.</p>
+    <div class="cards">${blocchi}</div>
+  </section>`;
+}
+
+function riepilogo(from, to) {
+  return PERSONE.map((p) => {
+    const primo = state.pesate.find((x) => x.persona === p);
+    const start = from ? weightAt(p, from) : primo ? Number(primo.peso_kg) : null;
+    const end = weightAt(p, to);
+    const d = start != null && end != null ? end - start : null;
+    const a = aderenza(p, from || '0000-01-01', to);
+    return `<div>
+      <p><strong class="who-name p-${p}">${esc(nome(p))}</strong></p>
+      <p class="small">Peso: ${d == null ? '—' : `<span class="delta ${d < 0 ? 'good' : d > 0 ? 'bad' : ''}">${segno(d)}</span>`}</p>
+      <p class="small">Piano seguito: ${a ? `<strong>${a.pct}%</strong>${a.sgarri ? ` · ${a.sgarri} ${a.sgarri === 1 ? 'sgarro' : 'sgarri'}` : ''}` : '—'}</p>
+    </div>`;
+  }).join('');
+}
+
+const ordinaVisite = (a, b) => (a.data + (a.ora || '')).localeCompare(b.data + (b.ora || ''));
+const quando = (iso) => {
+  const n = Math.round((Date.parse(iso + 'T00:00') - Date.parse(isoToday() + 'T00:00')) / 864e5);
+  return n === 0 ? 'oggi' : n === 1 ? 'domani' : `tra ${n} giorni`;
+};
+const oraTxt = (v) => (v.ora ? `, ore ${v.ora.slice(0, 5)}` : '');
+
+function prossimaVisita() {
+  return state.visite.filter((v) => v.data >= isoToday()).sort(ordinaVisite)[0] || null;
+}
+
+function viewVisite() {
+  const oggi = isoToday();
+  const prossima = prossimaVisita();
+  const ultima = state.visite.filter((v) => v.data < oggi)[0] || null;
+  const precedente = (v) => state.visite.filter((x) => x.data < v.data)[0] || null;
+  return `
+  <section class="hero"><p class="eyebrow">Nutrizionista</p><h1>Visite</h1></section>
+  ${prossima ? `<section class="panel next">
+    <p class="eyebrow">Prossima visita · ${quando(prossima.data)}</p>
+    <h2>${esc(fmtLong(prossima.data))}${esc(oraTxt(prossima))}</h2>
+    <p class="small muted">Da raccontare al nutrizionista: ${ultima ? `dall'ultima visita (${fmtDate(ultima.data)})` : "dall'inizio del percorso"} a oggi.</p>
+    <div class="totals">${riepilogo(ultima?.data ?? null, oggi)}</div>
+  </section>` : ''}
+  <section class="panel">
+    <h2>Nuova visita</h2>
+    <form data-form="visita" class="form-grid">
+      <div class="field"><label for="v-data">Data</label><input id="v-data" name="data" type="date" value="${shiftDay(oggi, 7)}" required></div>
+      <div class="field"><label for="v-ora">Ora</label><input id="v-ora" name="ora" type="time"></div>
+      <div class="field wide"><label for="v-note">Note</label><textarea id="v-note" name="note" rows="2" placeholder="Domande da fare, indicazioni ricevute…"></textarea></div>
+      <button class="btn primary wide" type="submit">Aggiungi visita</button>
+    </form>
+  </section>
+  ${state.visite.length ? state.visite.map((v) => {
+    const prev = precedente(v);
+    return `<section class="panel">
+      <div class="panel-head">
+        <h3>${esc(fmtLong(v.data))}${esc(oraTxt(v))}</h3>
+        <span class="row-end">
+          <span class="who ${v.data >= oggi ? 'p1' : 'entrambi'}">${v.data >= oggi ? 'In programma' : 'Fatta'}</span>
+          <button class="del" data-action="del" data-table="visite" data-id="${v.id}" aria-label="Elimina visita">×</button>
+        </span>
+      </div>
+      ${v.data <= oggi ? `<p class="small muted">${prev ? `Dalla visita del ${fmtDate(prev.data)}` : "Dall'inizio del percorso"} a questa visita</p><div class="totals">${riepilogo(prev?.data ?? null, v.data)}</div>` : ''}
+      <form data-form="nota-visita" data-id="${v.id}" class="form-grid">
+        <div class="field wide"><label for="vn-${v.id}">${v.data >= oggi ? 'Domande da fare' : 'Indicazioni ricevute'}</label>
+          <textarea id="vn-${v.id}" name="note" rows="3">${esc(v.note)}</textarea></div>
+        <div class="row-end wide"><button class="btn" type="submit">Salva note</button></div>
+      </form>
+    </section>`;
+  }).join('') : '<p class="empty">Nessuna visita registrata. Aggiungete il primo appuntamento con il nutrizionista.</p>'}`;
 }
 
 function menuList(items, withDelete = false) {
@@ -215,12 +392,18 @@ function viewOggi() {
   const mese = isoToday().slice(0, 7);
   const meseTot = sum(state.spese.filter((s) => s.data.startsWith(mese)).map((s) => s.importo));
   const daComprare = state.spesa.filter((s) => !s.comprato).length;
+  const visita = prossimaVisita();
   return `
   <section class="hero">
-    <p class="eyebrow">${esc(capital(new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })))}</p>
+    <p class="eyebrow">${esc(fmtLong(isoToday()))}</p>
     <h1>${dayN ? `Giorno ${dayN} del percorso` : 'Il percorso inizia qui'}</h1>
   </section>
+  ${visita ? `<section class="panel next row-between">
+    <div><p class="eyebrow">Visita dal nutrizionista · ${quando(visita.data)}</p><p><strong>${esc(fmtLong(visita.data))}${esc(oraTxt(visita))}</strong></p></div>
+    <button class="link" data-action="goto" data-tab="visite">Riepilogo</button>
+  </section>` : ''}
   <div class="cards">${PERSONE.map(personCard).join('')}</div>
+  ${state.mancaMigrazione ? '' : diarioPanel()}
   <section class="panel">
     <div class="panel-head"><h2>Menù di oggi</h2><button class="link" data-action="goto" data-tab="piano">Piano completo</button></div>
     ${menuList(menu) || '<p class="empty">Nessun pasto previsto per oggi. Inserisci il piano del nutrizionista nella sezione Piano.</p>'}
@@ -391,10 +574,14 @@ function viewPeso() {
   </section>`;
 }
 
-const VIEWS = { oggi: viewOggi, piano: viewPiano, spesa: viewSpesa, spese: viewSpese, peso: viewPeso };
+const VIEWS = { oggi: viewOggi, piano: viewPiano, spesa: viewSpesa, spese: viewSpese, peso: viewPeso, visite: viewVisite };
 
 function render() {
-  $('#view').innerHTML = VIEWS[state.tab]();
+  renderInSospeso = false;
+  const avviso = state.mancaMigrazione
+    ? '<p class="banner">Diario e visite non sono ancora attivi: eseguite <code>migrazione-02.sql</code> nel SQL Editor di Supabase.</p>'
+    : '';
+  $('#view').innerHTML = avviso + VIEWS[state.tab]();
   document.querySelectorAll('.tabbar button').forEach((b) => {
     if (b.dataset.tab === state.tab) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
@@ -432,13 +619,77 @@ const FORMS = {
     await run(sb.from('pesate').insert({ ...f, peso_kg: Number(f.peso_kg), vita_cm: f.vita_cm ? Number(f.vita_cm) : null }));
     await reload('pesate');
     toast(`Pesata di ${nome(f.persona)} salvata`);
+  },
+  async visita(f) {
+    await run(sb.from('visite').insert({ data: f.data, ora: f.ora || null, note: f.note || null }));
+    await reload('visite');
+    toast('Visita aggiunta');
+  },
+  async 'nota-visita'(f, form) {
+    await run(sb.from('visite').update({ note: f.note || null }).eq('id', form.dataset.id));
+    await reload('visite');
+    toast('Note salvate');
   }
 };
+
+function caricaScript(src) {
+  return new Promise((ok, ko) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ok;
+    s.onerror = () => ko(new Error('download non riuscito'));
+    document.head.appendChild(s);
+  });
+}
 
 const ACTIONS = {
   goto: (el) => goto(el.dataset.tab),
   giorno(el) { state.giorno = Number(el.dataset.g); render(); },
   mese(el) { state.mese = shiftMonth(state.mese, Number(el.dataset.dir)); render(); },
+  'diario-giorno'(el) { state.diarioData = shiftDay(state.diarioData, Number(el.dataset.dir)); render(); },
+  async diario(el) {
+    const { p, m, s } = el.dataset;
+    const data = state.diarioData;
+    const r = state.diario.find((x) => x.persona === p && x.data === data && x.momento === m);
+    if (r?.stato === s) {
+      await run(sb.from('diario').delete().eq('id', r.id));
+    } else {
+      let nota = null;
+      if (s === 'sgarro') {
+        const t = prompt('Cosa avete mangiato? (facoltativo)', r?.nota || '');
+        if (t === null) return;
+        nota = t.trim() || null;
+      }
+      await run(sb.from('diario').upsert({ persona: p, data, momento: m, stato: s, nota }, { onConflict: 'persona,data,momento' }));
+    }
+    await reload('diario');
+  },
+  async esporta() {
+    if (!window.XLSX) {
+      try {
+        await caricaScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+      } catch (e) {
+        toast('Non riesco a scaricare il modulo per Excel. Controllate la connessione e riprovate.');
+        throw e;
+      }
+    }
+    await loadAll();
+    const val = (v) => (v == null ? '' : v);
+    const fogli = {
+      Pesate: state.pesate.map((r) => ({ Data: r.data, Chi: nome(r.persona), 'Peso (kg)': Number(r.peso_kg), 'Vita (cm)': r.vita_cm != null ? Number(r.vita_cm) : '', Note: val(r.note) })),
+      Diario: state.diario.map((r) => ({ Data: r.data, Chi: nome(r.persona), Pasto: r.momento, Stato: capital(r.stato), Nota: val(r.nota) })),
+      Piano: state.pasti.map((r) => ({ Giorno: GIORNI[r.giorno - 1], Pasto: r.momento, Per: nome(r.persona), Alimento: r.alimento, Quantità: val(r.quantita), Note: val(r.note) })),
+      Spese: state.spese.map((r) => ({ Data: r.data, Descrizione: r.descrizione, Categoria: r.categoria, 'Importo (€)': Number(r.importo), 'Pagato da': nome(r.pagato_da) })),
+      Visite: state.visite.map((r) => ({ Data: r.data, Ora: r.ora ? r.ora.slice(0, 5) : '', Note: val(r.note) })),
+      Spesa: state.spesa.map((r) => ({ Prodotto: r.nome, Quantità: val(r.quantita), Reparto: r.categoria, Comprato: r.comprato ? 'sì' : 'no' })),
+      Profili: PERSONE.map((p) => ({ Persona: nome(p), 'Altezza (cm)': val(state.profili[p]?.altezza_cm), 'Peso obiettivo (kg)': val(state.profili[p]?.peso_obiettivo) }))
+    };
+    const wb = XLSX.utils.book_new();
+    Object.entries(fogli).forEach(([n, rows]) =>
+      XLSX.utils.book_append_sheet(wb, rows.length ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([['Nessun dato']]), n));
+    XLSX.writeFile(wb, `diario-leggero-${isoToday()}.xlsx`);
+    toast('File Excel scaricato');
+  },
   async del(el) {
     if (!confirm('Eliminare questo elemento?')) return;
     await run(sb.from(el.dataset.table).delete().eq('id', el.dataset.id));
@@ -489,6 +740,8 @@ const ACTIONS = {
   },
   async logout() {
     $('#settings').close();
+    if (canale) await sb.removeChannel(canale);
+    canale = null;
     await sb.auth.signOut();
   }
 };
@@ -510,7 +763,7 @@ document.addEventListener('submit', async (e) => {
   btn.disabled = true;
   try {
     const data = Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
-    await FORMS[form.dataset.form](data);
+    await FORMS[form.dataset.form](data, form);
   } catch {} finally { btn.disabled = false; }
 });
 
@@ -577,7 +830,14 @@ async function onSession(session) {
   if (caricato) return;
   caricato = true;
   render();
-  try { await loadAll(); } catch {}
+  try {
+    await loadAll();
+    ascolta();
+  } catch {}
+}
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
 if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !window.supabase) {
