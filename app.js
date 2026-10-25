@@ -1,5 +1,7 @@
 'use strict';
 
+const VERSIONE = '4 · 25 ott 2026';
+
 const MOMENTI = ['Colazione', 'Spuntino', 'Pranzo', 'Merenda', 'Cena'];
 const GIORNI = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
 const CATEGORIE_SPESA = ['Frutta e verdura', 'Carne e pesce', 'Latticini e uova', 'Pane, pasta e cereali', 'Legumi', 'Dispensa', 'Altro'];
@@ -43,6 +45,7 @@ const state = {
   diarioData: isoToday(),
   ultimo: { persona: 'entrambi', momento: 'Colazione' },
   mancaMigrazione: false,
+  erroreCaricamento: null,
   profili: {},
   pasti: [],
   spesa: [],
@@ -96,7 +99,9 @@ function toast(msg) {
 
 function errore(error) {
   console.error(error);
-  if (error?.code === '42501') {
+  if (error?.code === '42501' && /permission denied/i.test(error.message || '')) {
+    toast('Mancano i permessi sulle tabelle: eseguite le righe "grant" di schema.sql su Supabase.');
+  } else if (error?.code === '42501') {
     toast('Questo account non è autorizzato: aggiungi la tua email alla tabella membri su Supabase.');
   } else {
     toast(`Errore: ${error?.message || 'operazione non riuscita'}. Riprova.`);
@@ -137,8 +142,15 @@ async function load(table) {
 
 async function loadAll() {
   state.mancaMigrazione = false;
-  await Promise.all(['profili', ...Object.keys(ORDINE)].map(load));
-  render();
+  try {
+    await Promise.all(['profili', ...Object.keys(ORDINE)].map(load));
+    state.erroreCaricamento = null;
+  } catch (e) {
+    state.erroreCaricamento = e?.message || String(e);
+    throw e;
+  } finally {
+    render();
+  }
 }
 
 async function reload(table) {
@@ -588,7 +600,11 @@ function render() {
   const avviso = state.mancaMigrazione
     ? '<p class="banner">Diario e visite non sono ancora attivi: eseguite <code>migrazione-02.sql</code> nel SQL Editor di Supabase.</p>'
     : '';
-  $('#view').innerHTML = avviso + VIEWS[state.tab]();
+  const errore = state.erroreCaricamento
+    ? `<div class="banner error-banner" role="alert"><p><strong>Non riesco a leggere i dati.</strong> Messaggio del database: ${esc(state.erroreCaricamento)}</p>
+       <button class="btn" data-action="riprova">Riprova</button></div>`
+    : '';
+  $('#view').innerHTML = errore + avviso + VIEWS[state.tab]();
   document.querySelectorAll('.tabbar button').forEach((b) => {
     if (b.dataset.tab === state.tab) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
@@ -744,13 +760,21 @@ const ACTIONS = {
       </fieldset>`;
     }).join('');
     $('#settings-msg').hidden = true;
+    $('#versione').textContent = `Versione ${VERSIONE}`;
     $('#settings').showModal();
+  },
+  async riprova() {
+    await loadAll();
+    ascolta();
   },
   async logout() {
     $('#settings').close();
-    if (canale) await sb.removeChannel(canale);
+    // Esco subito su questo dispositivo, senza aspettare la rete o il canale in tempo reale
+    if (canale) sb.removeChannel(canale).catch(() => {});
     canale = null;
-    await sb.auth.signOut();
+    await sb.auth.signOut({ scope: 'local' }).catch(() => {});
+    caricato = false;
+    showScreen('login');
   }
 };
 

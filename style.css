@@ -253,3 +253,4 @@ textarea { resize: vertical; min-height: 64px; }
 .seg-btn.s-fatto[aria-pressed="true"] { background: var(--good); color: var(--surface); }
 .seg-btn.s-sgarro[aria-pressed="true"] { background: var(--bad); color: var(--surface); }
 .seg-btn.s-saltato[aria-pressed="true"] { background: var(--muted); color: var(--surface); }
+.error-banner { border-color: var(--bad); display: grid; gap: 10px; justify-items: start; }
