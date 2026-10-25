@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '4 · 25 ott 2026';
+const VERSIONE = '5 · 25 ott 2026';
 
 const MOMENTI = ['Colazione', 'Spuntino', 'Pranzo', 'Merenda', 'Cena'];
 const GIORNI = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
@@ -99,7 +99,9 @@ function toast(msg) {
 
 function errore(error) {
   console.error(error);
-  if (error?.code === '42501' && /permission denied/i.test(error.message || '')) {
+  if (error?.code === 'timeout') {
+    toast('Il server non risponde. Controllate la connessione e riprovate.');
+  } else if (error?.code === '42501' && /permission denied/i.test(error.message || '')) {
     toast('Mancano i permessi sulle tabelle: eseguite le righe "grant" di schema.sql su Supabase.');
   } else if (error?.code === '42501') {
     toast('Questo account non è autorizzato: aggiungi la tua email alla tabella membri su Supabase.');
@@ -108,8 +110,22 @@ function errore(error) {
   }
 }
 
+// Se il server non risponde, meglio un errore chiaro che un pulsante bloccato per sempre
+function conTimeout(query, ms = 15000) {
+  let timer;
+  const scadenza = new Promise((_, ko) => {
+    timer = setTimeout(() => ko({ code: 'timeout', message: 'il server non risponde' }), ms);
+  });
+  return Promise.race([query, scadenza]).finally(() => clearTimeout(timer));
+}
+
 async function run(query) {
-  const { data, error } = await query;
+  let data, error;
+  try {
+    ({ data, error } = await conTimeout(query));
+  } catch (e) {
+    error = e;
+  }
   if (error) {
     errore(error);
     throw error;
@@ -127,7 +143,7 @@ async function load(table) {
   let q = sb.from(table).select('*').order(col, { ascending: asc });
   if (col !== 'id') q = q.order('id', { ascending: true });
   if (NUOVE.has(table)) {
-    const { data, error } = await q;
+    const { data, error } = await conTimeout(q).catch((e) => ({ error: e }));
     if (error) {
       console.warn(error);
       state.mancaMigrazione = true;
@@ -156,37 +172,6 @@ async function loadAll() {
 async function reload(table) {
   await load(table);
   render();
-}
-
-/* Tempo reale: quando l'altra persona modifica qualcosa, ricarico quella tabella.
-   Se state scrivendo in un campo, aspetto che finiate prima di ridisegnare. */
-let renderInSospeso = false;
-const staScrivendo = () => {
-  const a = document.activeElement;
-  return !!a && $('#view').contains(a) && a.matches('input:not([type="checkbox"]), textarea, select');
-};
-function softRender() {
-  if (staScrivendo()) renderInSospeso = true;
-  else render();
-}
-document.addEventListener('focusout', () => setTimeout(() => {
-  if (renderInSospeso && !staScrivendo()) {
-    renderInSospeso = false;
-    render();
-  }
-}, 0));
-
-let canale = null;
-const timers = {};
-function ascolta() {
-  if (canale) return;
-  canale = sb.channel('modifiche')
-    .on('postgres_changes', { event: '*', schema: 'public' }, ({ table }) => {
-      if (table !== 'profili' && !ORDINE[table]) return;
-      clearTimeout(timers[table]);
-      timers[table] = setTimeout(() => load(table).then(softRender).catch(() => {}), 300);
-    })
-    .subscribe();
 }
 
 /* ---------- Views ---------- */
@@ -596,7 +581,6 @@ function viewPeso() {
 const VIEWS = { oggi: viewOggi, piano: viewPiano, spesa: viewSpesa, spese: viewSpese, peso: viewPeso, visite: viewVisite };
 
 function render() {
-  renderInSospeso = false;
   const avviso = state.mancaMigrazione
     ? '<p class="banner">Diario e visite non sono ancora attivi: eseguite <code>migrazione-02.sql</code> nel SQL Editor di Supabase.</p>'
     : '';
@@ -765,14 +749,14 @@ const ACTIONS = {
   },
   async riprova() {
     await loadAll();
-    ascolta();
   },
   async logout() {
     $('#settings').close();
-    // Esco subito su questo dispositivo, senza aspettare la rete o il canale in tempo reale
-    if (canale) sb.removeChannel(canale).catch(() => {});
-    canale = null;
-    await sb.auth.signOut({ scope: 'local' }).catch(() => {});
+    // Esco subito su questo dispositivo, senza aspettare la rete
+    await conTimeout(sb.auth.signOut({ scope: 'local' }), 3000).catch(() => {});
+    try {
+      Object.keys(localStorage).filter((k) => k.startsWith('sb-')).forEach((k) => localStorage.removeItem(k));
+    } catch {}
     caricato = false;
     showScreen('login');
   }
@@ -862,10 +846,7 @@ async function onSession(session) {
   if (caricato) return;
   caricato = true;
   render();
-  try {
-    await loadAll();
-    ascolta();
-  } catch {}
+  try { await loadAll(); } catch {}
 }
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
@@ -876,9 +857,15 @@ if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !window.supabase) {
   showScreen('setup');
 } else {
   try { const t = localStorage.getItem('dieta-tab'); if (VIEWS[t]) state.tab = t; } catch {}
-  sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+  sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+    // Senza il lucchetto tra schede: sui telefoni a volte resta chiuso e blocca salvataggi e uscita
+    auth: { lock: async (_nome, _attesa, fn) => await fn() }
+  });
   sb.auth.getSession().then(({ data }) => onSession(data.session));
-  sb.auth.onAuthStateChange((_event, session) => onSession(session));
+  // Il callback non deve aspettare altre chiamate a Supabase, altrimenti l'accesso si blocca
+  sb.auth.onAuthStateChange((_event, session) => {
+    setTimeout(() => onSession(session), 0);
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && caricato) loadAll().catch(() => {});
   });

@@ -1,5 +1,5 @@
 // Prima la rete (così vedete sempre l'ultima versione), la copia salvata solo se offline.
-const CACHE = 'diario-leggero-v4';
+const CACHE = 'diario-leggero-v5';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png'];
 
 self.addEventListener('install', (e) => {
