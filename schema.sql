@@ -80,3 +80,9 @@ begin
       'create policy solo_membri on %I for all to authenticated using (is_member()) with check (is_member())', t);
   end loop;
 end $$;
+
+-- Accesso alle tabelle per gli utenti loggati (le policy sopra limitano comunque ai membri)
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on profili, pasti, spesa, spese, pesate to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+grant execute on function is_member() to authenticated;
