@@ -254,3 +254,12 @@ textarea { resize: vertical; min-height: 64px; }
 .seg-btn.s-sgarro[aria-pressed="true"] { background: var(--bad); color: var(--surface); }
 .seg-btn.s-saltato[aria-pressed="true"] { background: var(--muted); color: var(--surface); }
 .error-banner { border-color: var(--bad); display: grid; gap: 10px; justify-items: start; }
+
+/* Piano incollato */
+details.panel { display: block; }
+details.panel > summary { font: 700 1.25rem var(--font-display); cursor: pointer; }
+.import-body { display: grid; gap: 14px; margin-top: 14px; }
+textarea { resize: vertical; }
+.inline-check { display: flex; align-items: center; gap: 10px; font-weight: 400; font-size: .95rem; color: var(--ink); }
+.preview { display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.scarti { margin: 6px 0 0; padding-left: 18px; }

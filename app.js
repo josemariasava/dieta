@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '5 · 25 ott 2026';
+const VERSIONE = '6 · 27 ott 2026';
 
 const MOMENTI = ['Colazione', 'Spuntino', 'Pranzo', 'Merenda', 'Cena'];
 const GIORNI = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
@@ -44,6 +44,11 @@ const state = {
   mese: isoToday().slice(0, 7),
   diarioData: isoToday(),
   ultimo: { persona: 'entrambi', momento: 'Colazione' },
+  // Piano incollato: il testo resta anche se la pagina si ridisegna (es. tornando da un'altra app)
+  bozza: { testo: '', persona: 'entrambi', giorni: 'tutti', sostituisci: true },
+  importa: null,
+  importaAperto: null,
+  spesaGiorni: 7,
   mancaMigrazione: false,
   erroreCaricamento: null,
   profili: {},
@@ -65,6 +70,189 @@ const nome = (p) => {
 const who = (p) => `<span class="who ${esc(p)}">${esc(nome(p))}</span>`;
 const options = (values, selected, label = (v) => v) =>
   values.map((v) => `<option value="${esc(v)}"${String(v) === String(selected) ? ' selected' : ''}>${esc(label(v))}</option>`).join('');
+
+/* ---------- Piano incollato e lista della spesa ---------- */
+
+// Minuscolo e senza accenti, per riconoscere "Lunedì" come "lunedi"
+const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+
+const GIORNI_NOMI = ['lunedi', 'martedi', 'mercoledi', 'giovedi', 'venerdi', 'sabato', 'domenica'];
+const TUTTI_I_GIORNI = [1, 2, 3, 4, 5, 6, 7];
+
+// "Lunedì", "lun", "Martedì e giovedì", "Da lunedì a venerdì", "lun-ven", "Tutti i giorni"
+function leggiGiorni(testo) {
+  const t = norm(testo);
+  if (/^(tutti i giorni|ogni giorno|tutta la settimana)$/.test(t)) return TUTTI_I_GIORNI;
+  const giorni = [];
+  for (const w of t.split(/[^a-z]+/).filter(Boolean)) {
+    const i = GIORNI_NOMI.findIndex((g) => w === g || w === g.slice(0, 3));
+    if (i >= 0) giorni.push(i + 1);
+    else if (!['e', 'da', 'dal', 'a', 'al', 'fino'].includes(w)) return null;
+  }
+  if (!giorni.length) return null;
+  if (giorni.length === 2 && /-|\b(a|al|fino)\b/.test(t)) {
+    const [da, a] = giorni;
+    return TUTTI_I_GIORNI.filter((g) => (da <= a ? g >= da && g <= a : g >= da || g <= a));
+  }
+  return [...new Set(giorni)];
+}
+
+const MOMENTI_TESTO = [
+  [/^(merenda|spuntino (del |di )?(meta )?pomeriggio|meta pomeriggio)/, 'Merenda'],
+  [/^(spuntino|meta mattin)/, 'Spuntino'],
+  [/^colazione/, 'Colazione'],
+  [/^pranzo/, 'Pranzo'],
+  [/^cena/, 'Cena']
+];
+
+function leggiMomento(testo, conDuePunti) {
+  const t = norm(testo);
+  // Senza ":" la riga è un titolo solo se è corta e senza numeri ("Pranzo", non "Pranzo pasta 80 g")
+  if (!conDuePunti && (t.length > 30 || /\d/.test(t))) return null;
+  return MOMENTI_TESTO.find(([re]) => re.test(t))?.[1] || null;
+}
+
+function leggiPersona(testo) {
+  const t = norm(testo).replace(/^per /, '');
+  if (['entrambi', 'entrambe', 'tutti e due', 'insieme'].includes(t)) return 'entrambi';
+  return PERSONE.find((p) => norm(nome(p)) === t) || null;
+}
+
+const NUMERO = '(?:\\d+\\s*\\/\\s*\\d+|\\d+(?:[.,]\\d+)?)';
+const UNITA = '(?:kg|g|gr|grammi|ml|cl|lt|l|litr[io]|cucchia\\w*|pz|pezz[io]|fett[ae]|vasett[io]|tazz\\w*|bicchier[ei]|porzion[ei]|scatolett[ae]|confezion[ei])';
+const QTA = `${NUMERO}\\s*${UNITA}?\\.?|q\\.?\\s*b\\.?|a piacere`;
+const SOLO_QTA = new RegExp(`^(${QTA})$`, 'i');
+const QTA_FINE = new RegExp(`\\s+(${QTA})$`, 'i');
+const QTA_INIZIO = new RegExp(`^(${NUMERO}\\s*${UNITA}?\\.?)\\s+(?:di\\s+|d['’]\\s*)?`, 'i');
+
+// "pane integrale 50 g (oppure 2 fette biscottate)" → alimento, quantità, nota
+function alimento(pezzo) {
+  const note = [];
+  let t = pezzo.replace(/\(([^)]*)\)/g, (_, n) => {
+    if (n.trim()) note.push(n.trim());
+    return ' ';
+  });
+  const alt = t.search(/\s(oppure|in alternativa)\s/i);
+  if (alt >= 0) {
+    note.push(t.slice(alt).trim());
+    t = t.slice(0, alt);
+  }
+  t = t.replace(/\s+/g, ' ').trim();
+  let quantita = null;
+  let m = t.match(SOLO_QTA);
+  if (m) return { alimento: '', quantita: m[1], note: null };
+  if ((m = t.match(QTA_FINE))) {
+    quantita = m[1];
+    t = t.slice(0, m.index);
+  } else if ((m = t.match(QTA_INIZIO))) {
+    quantita = m[1];
+    t = t.slice(m[0].length);
+  }
+  t = t.replace(/[\s,;-]+$/, '').trim();
+  return { alimento: t ? capital(t) : '', quantita: quantita && quantita.replace(/\s+/g, ' '), note: note.join(' · ') || null };
+}
+
+// Più alimenti sulla stessa riga, separati da ";", "+" o "," (ma non "1,5 kg" né dentro le parentesi)
+function alimenti(testo) {
+  const t = testo.replace(/:/g, ' ');
+  const pezzi = [''];
+  let prof = 0;
+  for (let k = 0; k < t.length; k++) {
+    const c = t[k];
+    if (c === '(') prof++;
+    if (c === ')') prof = Math.max(0, prof - 1);
+    const decimale = c === ',' && /\d/.test(t[k - 1] || '') && /\d/.test(t[k + 1] || '');
+    if (prof === 0 && (c === ';' || c === '+' || (c === ',' && !decimale))) pezzi.push('');
+    else pezzi[pezzi.length - 1] += c;
+  }
+  const out = [];
+  pezzi.map((p) => p.trim()).filter(Boolean).forEach((p) => {
+    const a = alimento(p);
+    const prec = out[out.length - 1];
+    if (a.alimento) out.push(a);
+    else if (prec && !prec.quantita) prec.quantita = a.quantita;  // "yogurt greco, 150 g"
+  });
+  return out;
+}
+
+function leggiPiano(testo, personaBase, giorniBase) {
+  const righe = [];
+  const scarti = [];
+  let giorni = giorniBase;
+  let persona = personaBase;
+  let momento = null;
+  testo.split(/\r?\n/).forEach((grezza) => {
+    const riga = grezza.replace(/^\s*(?:[-–—•*·▪●]|\d+[.)])\s*/, '').trim();
+    if (!riga) return;
+    const i = riga.indexOf(':');
+    const testa = i >= 0 ? riga.slice(0, i) : riga;
+    let titolo = true;
+    const g = leggiGiorni(testa);
+    const m = !g && leggiMomento(testa, i >= 0);
+    const p = !g && !m && leggiPersona(testa);
+    if (g) {
+      giorni = g;
+      momento = null;
+    } else if (m) {
+      momento = m;
+    } else if (p) {
+      persona = p;
+    } else {
+      titolo = false;
+    }
+    const cibo = titolo ? (i >= 0 ? riga.slice(i + 1).trim() : '') : riga;
+    if (!cibo) return;
+    if (!momento) return scarti.push(grezza.trim());
+    alimenti(cibo).forEach((a) => giorni.forEach((giorno) => righe.push({ persona, giorno, momento, ...a })));
+  });
+  return { righe, scarti };
+}
+
+const REPARTI = {
+  'Frutta e verdura': ['frutta', 'frutto', 'mela', 'mele', 'pera', 'pere', 'banan', 'arancia', 'arance', 'mandarin', 'clementin', 'kiwi', 'fragol', 'frutti di bosco', 'mirtill', 'lampon', 'uva', 'ananas', 'pesca', 'pesche', 'albicocc', 'prugn', 'cilieg', 'anguria', 'melone', 'limon', 'avocado', 'verdur', 'insalata', 'lattuga', 'rucola', 'valeriana', 'spinaci', 'bietol', 'zucchin', 'melanzan', 'pomodor', 'carot', 'finocch', 'broccol', 'cavol', 'verza', 'peperon', 'cetriol', 'fungh', 'cipoll', 'aglio', 'zucca', 'asparag', 'fagiolini', 'radicchio', 'sedano', 'patat', 'minestrone', 'carciof', 'porri', 'basilico', 'prezzemolo'],
+  'Carne e pesce': ['carne', 'pollo', 'tacchino', 'manzo', 'vitello', 'maiale', 'agnello', 'coniglio', 'hamburger', 'macinato', 'bresaola', 'prosciutto', 'speck', 'fesa', 'affettat', 'salmone', 'tonno', 'merluzzo', 'pesce', 'orata', 'branzino', 'spigola', 'gamber', 'sgombro', 'polpo', 'calamar', 'seppi', 'sardin', 'alici', 'acciugh', 'nasello', 'platessa', 'trota', 'cozze', 'vongole'],
+  'Latticini e uova': ['latte', 'yogurt', 'kefir', 'skyr', 'formagg', 'ricotta', 'mozzarell', 'parmigian', 'grana', 'fiocchi di latte', 'stracchino', 'feta', 'primo sale', 'scamorza', 'burro', 'uovo', 'uova', 'album'],
+  'Pane, pasta e cereali': ['pane', 'pasta', 'riso', 'farro', 'orzo', 'avena', 'fiocchi d', 'cereali', 'gallett', 'fette biscottate', 'cracker', 'grissini', 'quinoa', 'cous', 'bulgur', 'biscott', 'muesli', 'granola', 'piadin', 'frisell', 'gnocchi', 'farina', 'polenta', 'tortill'],
+  Legumi: ['legumi', 'lenticchi', 'ceci', 'fagioli', 'piselli', 'edamame', 'hummus', 'soia', 'tofu', 'lupini', 'fave'],
+  Dispensa: ['olio', 'aceto', 'sale', 'spezie', 'pepe', 'miele', 'marmellata', 'confettura', 'frutta secca', 'mandorl', 'noci', 'nocciol', 'pistacch', 'anacardi', 'arachid', 'burro di arachidi', 'semi', 'cioccolat', 'cacao', 'caffe', 'tisana', 'passata', 'pelati', 'pesto', 'dado', 'brodo', 'zucchero', 'dolcificante', 'integrator', 'proteine']
+};
+
+// Vince la parola che compare prima nel nome; a parità la più lunga ("burro di arachidi" batte "burro")
+function reparto(nomeProdotto) {
+  const t = norm(nomeProdotto);
+  let best = null;
+  for (const [cat, parole] of Object.entries(REPARTI)) {
+    for (const w of parole) {
+      const i = t.indexOf(w);
+      if (i >= 0 && (!best || i < best.i || (i === best.i && w.length > best.l))) best = { cat, i, l: w.length };
+    }
+  }
+  return best ? best.cat : 'Altro';
+}
+
+// "80 g" → { n: 80, u: 'g' }, "1 kg" → { n: 1000, u: 'g' }, "2" → { n: 2, u: 'pz' }
+function leggiQuantita(q) {
+  const m = norm(q).match(/^(\d+\s*\/\s*\d+|\d+(?:[.,]\d+)?)\s*([a-z]*)\.?$/);
+  if (!m) return null;
+  const [a, b] = m[1].split('/').map((x) => Number(x.trim().replace(',', '.')));
+  const n = b ? a / b : a;
+  const u = m[2];
+  if (['g', 'gr', 'grammi'].includes(u)) return { n, u: 'g' };
+  if (u === 'kg') return { n: n * 1000, u: 'g' };
+  if (u === 'ml') return { n, u: 'ml' };
+  if (u === 'cl') return { n: n * 10, u: 'ml' };
+  if (['l', 'lt', 'litro', 'litri'].includes(u)) return { n: n * 1000, u: 'ml' };
+  return { n, u: u || 'pz' };
+}
+
+function totale(tot) {
+  const f = (v) => v.toLocaleString('it-IT', { maximumFractionDigits: 1 });
+  return [...tot].map(([u, n]) => {
+    if (u === 'g') return n >= 1000 ? `${f(n / 1000)} kg` : `${f(n)} g`;
+    if (u === 'ml') return n >= 1000 ? `${f(n / 1000)} l` : `${f(n)} ml`;
+    return `${f(n)} ${u}`;
+  }).join(' + ') || null;
+}
 
 /* ---------- Supabase ---------- */
 
@@ -446,6 +634,7 @@ function viewPiano() {
     ${menuList(items, true) || `<p class="empty">Nessun pasto per ${GIORNI[g - 1].toLowerCase()}. Aggiungi il primo alimento qui sotto.</p>`}
     ${items.length ? `<div class="row-end"><button class="link" data-action="copia-giorno">Copia ${GIORNI[g - 1].toLowerCase()} su tutta la settimana</button></div>` : ''}
   </section>
+  ${importaPanel()}
   <section class="panel">
     <h2>Aggiungi alimento</h2>
     <form data-form="pasto" class="form-grid">
@@ -464,6 +653,66 @@ function viewPiano() {
   </section>`;
 }
 
+const ESEMPIO_PIANO = `Tutti i giorni
+Colazione: latte 200 ml; 30 g fiocchi d'avena
+Pranzo
+- pasta integrale 80 g (oppure riso)
+- zucchine 200 g
+Cena: petto di pollo 150 g + insalata`;
+
+// Giorni con gli stessi alimenti mostrati una volta sola: "Tutti i giorni", "Lunedì, Martedì…"
+function anteprimaPiano(righe) {
+  const gruppi = new Map();
+  TUTTI_I_GIORNI.forEach((g) => {
+    const delGiorno = righe.filter((r) => r.giorno === g);
+    if (!delGiorno.length) return;
+    const firma = JSON.stringify(delGiorno.map((r) => [r.persona, r.momento, r.alimento, r.quantita, r.note]));
+    if (!gruppi.has(firma)) gruppi.set(firma, []);
+    gruppi.get(firma).push(g);
+  });
+  return [...gruppi.values()].map((gg) => `<div class="meal">
+    <h3>${gg.length === 7 ? 'Tutti i giorni' : esc(gg.map((g) => GIORNI[g - 1]).join(', '))}</h3>
+    ${menuList(righe.filter((r) => r.giorno === gg[0]))}
+  </div>`).join('');
+}
+
+function importaPanel() {
+  const b = state.bozza;
+  const imp = state.importa;
+  const aperto = state.importaAperto ?? (!!imp || !state.pasti.length);
+  const nGiorni = imp ? new Set(imp.righe.map((r) => r.giorno)).size : 0;
+  return `<details class="panel import" id="importa"${aperto ? ' open' : ''}>
+    <summary>Incolla il piano completo</summary>
+    <div class="import-body">
+      <p class="small muted">Copiate il testo del piano da un PDF, da un'email o da una foto (su iPhone tenete premuto sul testo della foto), oppure dettatelo con il microfono della tastiera.
+        Scrivete il pasto come titolo (<strong>Colazione:</strong>, <strong>Pranzo</strong>…) e sotto gli alimenti, uno per riga o separati da punto e virgola.
+        Per i giorni: <strong>Lunedì</strong>, <strong>Da lunedì a venerdì</strong>, <strong>Tutti i giorni</strong>. Per una sola persona, il suo nome: <strong>${esc(nome('p2'))}:</strong></p>
+      <form data-form="importa" class="form-grid">
+        <div class="field wide"><label for="i-testo">Testo del piano</label>
+          <textarea id="i-testo" name="testo" rows="9" required placeholder="${esc(ESEMPIO_PIANO)}">${esc(b.testo)}</textarea></div>
+        <div class="field"><label for="i-persona">Per</label>
+          <select id="i-persona" name="persona">${options(['entrambi', ...PERSONE], b.persona, nome)}</select></div>
+        <div class="field"><label for="i-giorni">Se il testo non dice i giorni</label>
+          <select id="i-giorni" name="giorni">${options(['tutti', ...TUTTI_I_GIORNI], b.giorni, (v) => (v === 'tutti' ? 'Tutta la settimana' : `Solo ${GIORNI[v - 1].toLowerCase()}`))}</select></div>
+        <label class="inline-check wide"><input type="checkbox" class="check" name="sostituisci"${b.sostituisci ? ' checked' : ''}> Sostituisci i pasti già inseriti in quei giorni</label>
+        <button class="btn wide" type="submit">Mostra l'anteprima</button>
+      </form>
+      ${imp ? `<div class="preview" id="anteprima">
+        <h2>Anteprima</h2>
+        ${imp.righe.length
+          ? `<p class="small muted">${imp.righe.length} alimenti in ${nGiorni} ${nGiorni === 1 ? 'giorno' : 'giorni'}. Se qualcosa non torna, correggete il testo e premete di nuovo Mostra l'anteprima.</p>`
+          : '<p class="empty">Non ho trovato alimenti. Controllate che ci siano i titoli dei pasti (Colazione, Pranzo…).</p>'}
+        ${imp.scarti.length ? `<div class="banner"><p><strong>Righe ignorate</strong>, perché sopra non c'è ancora il titolo di un pasto:</p><ul class="scarti">${imp.scarti.map((s) => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
+        ${anteprimaPiano(imp.righe)}
+        <div class="row-end">
+          <button class="btn" data-action="importa-annulla">Annulla</button>
+          ${imp.righe.length ? `<button class="btn primary" data-action="importa-conferma">Aggiungi al piano</button>` : ''}
+        </div>
+      </div>` : ''}
+    </div>
+  </details>`;
+}
+
 function viewSpesa() {
   const daFare = state.spesa.filter((s) => !s.comprato).length;
   const groups = CATEGORIE_SPESA.map((c) => [c, state.spesa.filter((s) => s.categoria === c)]).filter(([, l]) => l.length);
@@ -479,10 +728,16 @@ function viewSpesa() {
       <div class="field"><label for="s-categoria">Reparto</label><select id="s-categoria" name="categoria">${options(CATEGORIE_SPESA, 'Frutta e verdura')}</select></div>
       <button class="btn primary wide" type="submit">Aggiungi alla lista</button>
     </form>
-    <div class="row-between">
-      <button class="link" data-action="genera-spesa">Aggiungi gli alimenti del piano</button>
-      ${state.spesa.some((s) => s.comprato) ? '<button class="link" data-action="pulisci-spesa">Rimuovi i prodotti comprati</button>' : ''}
-    </div>
+    ${state.spesa.some((s) => s.comprato) ? '<div class="row-end"><button class="link" data-action="pulisci-spesa">Rimuovi i prodotti comprati</button></div>' : ''}
+  </section>
+  <section class="panel">
+    <h2>Dal piano alimentare</h2>
+    <p class="small muted">Somma le quantità del piano per i giorni scelti, a partire da oggi, e mette ogni prodotto nel suo reparto. I pasti di entrambi contano doppio; i prodotti già in lista non vengono ripetuti.</p>
+    <form data-form="genera-spesa" class="form-grid">
+      <div class="field"><label for="g-giorni">Per quanti giorni</label>
+        <select id="g-giorni" name="giorni">${options([7, 6, 5, 4, 3, 2, 1], state.spesaGiorni, (n) => (n === 7 ? 'Una settimana' : n === 1 ? 'Solo oggi' : `${n} giorni`))}</select></div>
+      <button class="btn" type="submit">Prendi dal piano</button>
+    </form>
   </section>
   ${groups.length ? groups.map(([c, list]) => `<section class="panel"><h4>${esc(c)}</h4><ul class="list">
     ${list.map((s) => `<li class="${s.comprato ? 'done' : ''}">
@@ -632,6 +887,38 @@ const FORMS = {
     await reload('visite');
     toast('Visita aggiunta');
   },
+  importa(f) {
+    Object.assign(state.bozza, { testo: f.testo, persona: f.persona, giorni: f.giorni, sostituisci: f.sostituisci === 'on' });
+    state.importa = leggiPiano(f.testo, f.persona, f.giorni === 'tutti' ? TUTTI_I_GIORNI : [Number(f.giorni)]);
+    state.importaAperto = true;
+    render();
+    $('#anteprima')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  async 'genera-spesa'(f) {
+    const n = Number(f.giorni);
+    state.spesaGiorni = n;
+    const giorni = Array.from({ length: n }, (_, i) => weekdayOf(shiftDay(isoToday(), i)));
+    const presenti = new Set(state.spesa.filter((s) => !s.comprato).map((s) => s.nome.trim().toLowerCase()));
+    const giaInLista = new Set();
+    const prodotti = new Map();
+    giorni.forEach((g) => state.pasti.filter((p) => p.giorno === g).forEach((p) => {
+      const k = p.alimento.trim().toLowerCase();
+      if (presenti.has(k)) return giaInLista.add(k);
+      if (!prodotti.has(k)) prodotti.set(k, { nome: p.alimento.trim(), tot: new Map() });
+      const q = leggiQuantita(p.quantita);
+      if (q) {
+        const tot = prodotti.get(k).tot;
+        tot.set(q.u, (tot.get(q.u) || 0) + q.n * (p.persona === 'entrambi' ? 2 : 1));
+      }
+    }));
+    if (!prodotti.size) {
+      return toast(!state.pasti.length ? 'Il piano alimentare è ancora vuoto'
+        : giaInLista.size ? 'Tutti gli alimenti del piano sono già in lista' : 'Nessun pasto previsto in quei giorni');
+    }
+    await run(sb.from('spesa').insert([...prodotti.values()].map((x) => ({ nome: x.nome, quantita: totale(x.tot), categoria: reparto(x.nome) }))));
+    await reload('spesa');
+    toast(`Aggiunti ${prodotti.size} prodotti${giaInLista.size ? ` (${giaInLista.size} erano già in lista)` : ''}`);
+  },
   async 'nota-visita'(f, form) {
     await run(sb.from('visite').update({ note: f.note || null }).eq('id', form.dataset.id));
     await reload('visite');
@@ -715,17 +1002,28 @@ const ACTIONS = {
     await reload('pasti');
     toast('Piano copiato su tutta la settimana');
   },
-  async 'genera-spesa'() {
-    const presenti = new Set(state.spesa.filter((s) => !s.comprato).map((s) => s.nome.trim().toLowerCase()));
-    const nuovi = new Map();
-    state.pasti.forEach((p) => {
-      const k = p.alimento.trim().toLowerCase();
-      if (!presenti.has(k) && !nuovi.has(k)) nuovi.set(k, p.alimento.trim());
-    });
-    if (!nuovi.size) return toast(state.pasti.length ? 'Tutti gli alimenti del piano sono già in lista' : 'Il piano alimentare è ancora vuoto');
-    await run(sb.from('spesa').insert([...nuovi.values()].map((nome) => ({ nome, categoria: 'Altro' }))));
-    await reload('spesa');
-    toast(`Aggiunti ${nuovi.size} alimenti dal piano`);
+  async 'importa-conferma'() {
+    const { righe } = state.importa;
+    let vecchi = [];
+    if (state.bozza.sostituisci) {
+      const giorni = new Set(righe.map((r) => r.giorno));
+      const persone = new Set(righe.map((r) => r.persona));
+      vecchi = state.pasti
+        .filter((p) => giorni.has(p.giorno) && (persone.has('entrambi') || persone.has(p.persona)))
+        .map((p) => p.id);
+    }
+    // Prima aggiungo, poi tolgo i vecchi: se qualcosa va storto non resta un piano vuoto
+    await run(sb.from('pasti').insert(righe));
+    if (vecchi.length) await run(sb.from('pasti').delete().in('id', vecchi));
+    state.importa = null;
+    state.importaAperto = null;
+    state.bozza.testo = '';
+    await reload('pasti');
+    toast(`Piano aggiornato: ${righe.length} alimenti${vecchi.length ? `, ${vecchi.length} vecchi rimossi` : ''}`);
+  },
+  'importa-annulla'() {
+    state.importa = null;
+    render();
   },
   async 'pulisci-spesa'() {
     await run(sb.from('spesa').delete().eq('comprato', true));
@@ -783,7 +1081,21 @@ document.addEventListener('submit', async (e) => {
   } catch {} finally { btn.disabled = false; }
 });
 
+function salvaBozza(el) {
+  if (!el.name || !el.closest('[data-form="importa"]')) return false;
+  state.bozza[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+  return true;
+}
+
+document.addEventListener('input', (e) => salvaBozza(e.target));
+
+// "toggle" non risale fino al documento: lo intercetto in fase di cattura
+document.addEventListener('toggle', (e) => {
+  if (e.target.id === 'importa') state.importaAperto = e.target.open;
+}, true);
+
 document.addEventListener('change', async (e) => {
+  if (salvaBozza(e.target)) return;
   if (e.target.id === 'filtro') {
     state.filtro = e.target.value;
     return render();
