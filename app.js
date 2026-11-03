@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '6 · 27 ott 2026';
+const VERSIONE = '7 · 3 nov 2026';
 
 const MOMENTI = ['Colazione', 'Spuntino', 'Pranzo', 'Merenda', 'Cena'];
 const GIORNI = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
@@ -211,8 +211,8 @@ function leggiPiano(testo, personaBase, giorniBase) {
 const REPARTI = {
   'Frutta e verdura': ['frutta', 'frutto', 'mela', 'mele', 'pera', 'pere', 'banan', 'arancia', 'arance', 'mandarin', 'clementin', 'kiwi', 'fragol', 'frutti di bosco', 'mirtill', 'lampon', 'uva', 'ananas', 'pesca', 'pesche', 'albicocc', 'prugn', 'cilieg', 'anguria', 'melone', 'limon', 'avocado', 'verdur', 'insalata', 'lattuga', 'rucola', 'valeriana', 'spinaci', 'bietol', 'zucchin', 'melanzan', 'pomodor', 'carot', 'finocch', 'broccol', 'cavol', 'verza', 'peperon', 'cetriol', 'fungh', 'cipoll', 'aglio', 'zucca', 'asparag', 'fagiolini', 'radicchio', 'sedano', 'patat', 'minestrone', 'carciof', 'porri', 'basilico', 'prezzemolo'],
   'Carne e pesce': ['carne', 'pollo', 'tacchino', 'manzo', 'vitello', 'maiale', 'agnello', 'coniglio', 'hamburger', 'macinato', 'bresaola', 'prosciutto', 'speck', 'fesa', 'affettat', 'salmone', 'tonno', 'merluzzo', 'pesce', 'orata', 'branzino', 'spigola', 'gamber', 'sgombro', 'polpo', 'calamar', 'seppi', 'sardin', 'alici', 'acciugh', 'nasello', 'platessa', 'trota', 'cozze', 'vongole'],
-  'Latticini e uova': ['latte', 'yogurt', 'kefir', 'skyr', 'formagg', 'ricotta', 'mozzarell', 'parmigian', 'grana', 'fiocchi di latte', 'stracchino', 'feta', 'primo sale', 'scamorza', 'burro', 'uovo', 'uova', 'album'],
-  'Pane, pasta e cereali': ['pane', 'pasta', 'riso', 'farro', 'orzo', 'avena', 'fiocchi d', 'cereali', 'gallett', 'fette biscottate', 'cracker', 'grissini', 'quinoa', 'cous', 'bulgur', 'biscott', 'muesli', 'granola', 'piadin', 'frisell', 'gnocchi', 'farina', 'polenta', 'tortill'],
+  'Latticini e uova': ['latte', 'yogurt', 'kefir', 'skyr', 'formagg', 'ricotta', 'mozzarell', 'parmigian', 'grana', 'fiocchi di latte', 'stracchino', 'crescenza', 'feta', 'primo sale', 'scamorza', 'burro', 'uovo', 'uova', 'album'],
+  'Pane, pasta e cereali': ['pane', 'pasta', 'riso', 'farro', 'orzo', 'avena', 'fiocchi d', 'cereali', 'gallett', 'fette biscottate', 'cracker', 'grissini', 'quinoa', 'cous', 'bulgur', 'biscott', 'muesli', 'granola', 'piadin', 'frisell', 'wasa', 'weetabix', 'gnocchi', 'farina', 'polenta', 'tortill'],
   Legumi: ['legumi', 'lenticchi', 'ceci', 'fagioli', 'piselli', 'edamame', 'hummus', 'soia', 'tofu', 'lupini', 'fave'],
   Dispensa: ['olio', 'aceto', 'sale', 'spezie', 'pepe', 'miele', 'marmellata', 'confettura', 'frutta secca', 'mandorl', 'noci', 'nocciol', 'pistacch', 'anacardi', 'arachid', 'burro di arachidi', 'semi', 'cioccolat', 'cacao', 'caffe', 'tisana', 'passata', 'pelati', 'pesto', 'dado', 'brodo', 'zucchero', 'dolcificante', 'integrator', 'proteine']
 };
