@@ -10,3 +10,7 @@ App web per il nostro percorso con il nutrizionista: piano alimentare, lista del
 2. Crea i due utenti in Authentication > Users > Add user (spunta "Auto Confirm User").
 3. Inserisci Project URL e chiave anon in `config.js`.
 4. Esegui `migrazione-02.sql` (diario e visite) e `migrazione-03.sql` (ping contro la pausa di Supabase).
+
+## Development notes
+- After each deploy, bump `VERSIONE` in `app.js`, the `?v=` params in `index.html` and `CACHE` in `sw.js`, otherwise phones keep the old cached version.
+- Decimal fields (weight, waist, amounts, height, target weight) are `type="text" inputmode="decimal"` and are parsed with `dec()`, which accepts both a comma and a dot. Plain `type="number"` dropped the decimals on iPhones with an Italian keyboard.
