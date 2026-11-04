@@ -1,6 +1,8 @@
 'use strict';
 
-const VERSIONE = '7 · 3 nov 2026';
+const VERSIONE = '8 · 4 nov 2026';
+// Parses numbers typed with either a decimal comma (Italian keyboards) or a dot.
+const dec = (v) => Number(String(v ?? '').trim().replace(',', '.'));
 
 const MOMENTI = ['Colazione', 'Spuntino', 'Pranzo', 'Merenda', 'Cena'];
 const GIORNI = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
@@ -776,7 +778,7 @@ function viewSpese() {
     <h2>Nuova spesa</h2>
     <form data-form="costo" class="form-grid">
       <div class="field wide"><label for="c-descrizione">Descrizione</label><input id="c-descrizione" name="descrizione" required placeholder="Es. spesa settimanale Esselunga"></div>
-      <div class="field"><label for="c-importo">Importo (€)</label><input id="c-importo" name="importo" type="number" inputmode="decimal" step="0.01" min="0" required></div>
+      <div class="field"><label for="c-importo">Importo (€)</label><input id="c-importo" name="importo" type="text" inputmode="decimal" autocomplete="off" pattern="[0-9]+([.,][0-9]+)?" title="Numero, es. 68,7" required></div>
       <div class="field"><label for="c-data">Data</label><input id="c-data" name="data" type="date" value="${isoToday()}" required></div>
       <div class="field"><label for="c-categoria">Categoria</label><select id="c-categoria" name="categoria">${options(CATEGORIE_COSTI, 'Spesa alimentare')}</select></div>
       <div class="field"><label for="c-pagato">Pagato da</label><select id="c-pagato" name="pagato_da">${options(['insieme', ...PERSONE], 'insieme', nome)}</select></div>
@@ -808,8 +810,8 @@ function viewPeso() {
     <form data-form="pesata" class="form-grid">
       <div class="field"><label for="w-persona">Chi</label><select id="w-persona" name="persona">${options(PERSONE, 'p1', nome)}</select></div>
       <div class="field"><label for="w-data">Data</label><input id="w-data" name="data" type="date" value="${isoToday()}" required></div>
-      <div class="field"><label for="w-peso">Peso (kg)</label><input id="w-peso" name="peso_kg" type="number" inputmode="decimal" step="0.1" min="20" max="300" required></div>
-      <div class="field"><label for="w-vita">Giro vita (cm)</label><input id="w-vita" name="vita_cm" type="number" inputmode="decimal" step="0.5" min="30" max="250" placeholder="Facoltativo"></div>
+      <div class="field"><label for="w-peso">Peso (kg)</label><input id="w-peso" name="peso_kg" type="text" inputmode="decimal" autocomplete="off" pattern="[0-9]+([.,][0-9]+)?" title="Numero, es. 68,7" required></div>
+      <div class="field"><label for="w-vita">Giro vita (cm)</label><input id="w-vita" name="vita_cm" type="text" inputmode="decimal" autocomplete="off" pattern="[0-9]+([.,][0-9]+)?" title="Numero, es. 68,7" placeholder="Facoltativo"></div>
       <button class="btn primary wide" type="submit">Salva pesata</button>
     </form>
   </section>
@@ -872,13 +874,13 @@ const FORMS = {
     $('#s-nome')?.focus();
   },
   async costo(f) {
-    await run(sb.from('spese').insert({ ...f, importo: Number(f.importo) }));
+    await run(sb.from('spese').insert({ ...f, importo: dec(f.importo) }));
     state.mese = f.data.slice(0, 7);
     await reload('spese');
     toast('Spesa aggiunta');
   },
   async pesata(f) {
-    await run(sb.from('pesate').insert({ ...f, peso_kg: Number(f.peso_kg), vita_cm: f.vita_cm ? Number(f.vita_cm) : null }));
+    await run(sb.from('pesate').insert({ ...f, peso_kg: dec(f.peso_kg), vita_cm: f.vita_cm ? dec(f.vita_cm) : null }));
     await reload('pesate');
     toast(`Pesata di ${nome(f.persona)} salvata`);
   },
@@ -1036,8 +1038,8 @@ const ACTIONS = {
         <legend class="who ${p}">${p === 'p1' ? 'Persona 1' : 'Persona 2'}</legend>
         <label for="st-nome-${p}">Nome</label><input id="st-nome-${p}" name="nome-${p}" value="${esc(pr.nome || nome(p))}" required>
         <div class="form-grid">
-          <div class="field"><label for="st-alt-${p}">Altezza (cm)</label><input id="st-alt-${p}" name="alt-${p}" type="number" inputmode="decimal" step="any" min="100" max="230" value="${pr.altezza_cm ?? ''}"></div>
-          <div class="field"><label for="st-obj-${p}">Peso obiettivo (kg)</label><input id="st-obj-${p}" name="obj-${p}" type="number" inputmode="decimal" step="any" min="30" max="250" value="${pr.peso_obiettivo ?? ''}"></div>
+          <div class="field"><label for="st-alt-${p}">Altezza (cm)</label><input id="st-alt-${p}" name="alt-${p}" type="text" inputmode="decimal" autocomplete="off" pattern="[0-9]+([.,][0-9]+)?" title="Numero, es. 68,7" value="${pr.altezza_cm ?? ''}"></div>
+          <div class="field"><label for="st-obj-${p}">Peso obiettivo (kg)</label><input id="st-obj-${p}" name="obj-${p}" type="text" inputmode="decimal" autocomplete="off" pattern="[0-9]+([.,][0-9]+)?" title="Numero, es. 68,7" value="${pr.peso_obiettivo ?? ''}"></div>
         </div>
       </fieldset>`;
     }).join('');
@@ -1114,7 +1116,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
   if (e.submitter?.value !== 'save') return;
   e.preventDefault();
   const f = new FormData(e.target);
-  const n = (v) => (String(v ?? '').trim() === '' ? null : Number(v));
+  const n = (v) => (String(v ?? '').trim() === '' ? null : dec(v));
   const rows = PERSONE.map((p) => ({
     persona: p,
     nome: String(f.get(`nome-${p}`)).trim() || nome(p),
