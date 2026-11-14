@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '8 · 4 nov 2026';
+const VERSIONE = '9 · 14 nov 2026';
 // Parses numbers typed with either a decimal comma (Italian keyboards) or a dot.
 const dec = (v) => Number(String(v ?? '').trim().replace(',', '.'));
 
@@ -9,6 +9,47 @@ const GIORNI = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sa
 const CATEGORIE_SPESA = ['Frutta e verdura', 'Carne e pesce', 'Latticini e uova', 'Pane, pasta e cereali', 'Legumi', 'Dispensa', 'Altro'];
 const CATEGORIE_COSTI = ['Spesa alimentare', 'Nutrizionista', 'Sport e palestra', 'Integratori', 'Altro'];
 const PERSONE = ['p1', 'p2'];
+
+// Nutritionist's substitution list ("Lista alimenti sostitutivi"): an item can be swapped
+// only with others of the same group, keeping the gram weight written in the plan.
+// `chiavi` are lowercase fragments matched against the food name in the plan.
+const SOSTITUTI = [
+  { id: 'verdure', titolo: 'Verdure', chiavi: ['verdur'],
+    voci: ['lattuga', 'sedano', 'insalata', 'broccoli', 'rucola', 'spinaci', 'radicchio', 'verza', 'cavolfiore', 'cavolo cappuccio', 'cavolini di Bruxelles', 'finocchi', 'cetrioli', 'peperoni verdi', 'ravanelli', 'cime di rapa', 'cipolla', 'funghi', 'asparagi', 'carciofi', 'zucchine', 'fagiolini', 'melanzane'],
+    nota: 'Liberamente, anche mescolate. Peso a crudo e pulito. Cotture: vapore, lessa, forno, padella o friggitrice ad aria (no gratinate, fritte o impastellate). Patate, legumi e avocado non contano come verdure. Se c\'è ancora fame si può salire di 100 g.' },
+  { id: 'frutta', titolo: 'Frutta', chiavi: ['frutta fresca'],
+    voci: ['lamponi', 'more', 'fragole', 'prugne', 'mela', 'clementine', 'kiwi', 'ciliegie', 'mirtilli', 'melone', 'pesca', 'mango', 'pera', 'albicocche'],
+    nota: '150 g ≈ 1 frutto medio (mela, arancia) oppure 2 piccoli (2 kiwi, 2 albicocche, 2 prugne).' },
+  { id: 'secca', titolo: 'Frutta secca oleosa al naturale', chiavi: ['frutta secca'],
+    voci: ['mandorle', 'noci', 'noci pecan, macadamia, brasile', 'anacardi', 'pistacchi', 'nocciole', 'pinoli'] },
+  { id: 'formaggi', titolo: 'Formaggi freschi', chiavi: ['primo sale', 'mozzarella', 'crescenza', 'ricotta', 'fiocchi di latte', 'feta', 'quark', 'philadelphia'],
+    voci: ['fiocchi di latte', 'primo sale', 'ricotta light', 'mozzarella light o protein', 'feta light', 'quark', 'philadelphia protein o light'] },
+  { id: 'affettati', titolo: 'Affettati', chiavi: ['bresaola', 'fesa', 'prosciutto', 'speck'],
+    voci: ['bresaola', 'fesa di tacchino o pollo', 'prosciutto cotto o crudo', 'speck'] },
+  { id: 'carne', titolo: 'Carne', chiavi: ['pollo', 'tacchino', 'manzo', 'vitell'],
+    voci: ['pollo', 'tacchino', 'manzo (solo tagli magri)'] },
+  { id: 'magro', titolo: 'Pesce magro', chiavi: ['merluzzo', 'nasello', 'rombo', 'sogliola', 'gamberi', 'calamar', 'polpo', 'seppi'],
+    voci: ['merluzzo o nasello', 'rombo', 'sogliola', 'gamberi', 'calamaro', 'polpo', 'seppia'],
+    nota: 'Non si scambia con il pesce grasso: le grammature sono diverse.' },
+  { id: 'grasso', titolo: 'Pesce grasso', chiavi: ['salmone', 'orata', 'branzino', 'tonno', 'spada', 'trota', 'persico'],
+    voci: ['salmone', 'orata', 'branzino', 'tonno', 'spada', 'trota', 'persico'],
+    nota: 'Non si scambia con il pesce magro: le grammature sono diverse.' },
+  { id: 'gallette', titolo: 'Carboidrati', chiavi: ['wasa', 'gallett'],
+    voci: ['Wasa integrali', 'gallette di qualsiasi tipo (no quelle di mais)'] },
+  { id: 'cereali', titolo: 'Cereali da colazione', chiavi: ['weetabix', 'avena', 'muesli', 'soffiat', 'cereali'],
+    voci: ['Weetabix', 'fiocchi d\'avena', 'cereali integrali al naturale', 'farro, orzo, riso o quinoa soffiati al naturale', 'muesli al naturale'] }
+];
+const REGOLE_PIANO = [
+  'Colazione: sceglietene almeno 2 tra quelle del piano e fatele ruotare durante la settimana.',
+  'Spuntino e merenda si possono invertire.',
+  'Pranzo e cena si possono invertire, ma nello stesso giorno.',
+  'Per sostituire un alimento usate la lista qui sotto, restando nello stesso gruppo e con la stessa grammatura del piano.',
+  'Le marche indicate sono solo un esempio: va bene un prodotto equivalente, con la stessa grammatura.'
+];
+const gruppoSostituti = (alimento) => {
+  const a = String(alimento || '').toLowerCase();
+  return SOSTITUTI.find((g) => g.chiavi.some((k) => a.includes(k)));
+};
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -525,12 +566,36 @@ function viewVisite() {
   }).join('') : '<p class="empty">Nessuna visita registrata. Aggiungete il primo appuntamento con il nutrizionista.</p>'}`;
 }
 
+// Collapsible "Alternative" line under a plan item, if its food belongs to a substitution group.
+function alternative(alimento) {
+  const g = gruppoSostituti(alimento);
+  if (!g) return '';
+  return `<details class="alt"><summary>Alternative · ${esc(g.titolo.toLowerCase())}</summary>
+    <p>${esc(g.voci.join(', '))}</p>
+    <p class="muted">Stessa grammatura del piano.${g.nota ? ' ' + esc(g.nota) : ''}</p>
+  </details>`;
+}
+
+function sostitutiviPanel() {
+  return `<details class="panel import" id="sostitutivi">
+    <summary>Alimenti sostitutivi</summary>
+    <div class="import-body">
+      <ul class="rules">${REGOLE_PIANO.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+      ${SOSTITUTI.map((g) => `<div class="sost">
+        <h4>${esc(g.titolo)}</h4>
+        <p>${esc(g.voci.join(', '))}</p>
+        ${g.nota ? `<p class="small muted">${esc(g.nota)}</p>` : ''}
+      </div>`).join('')}
+    </div>
+  </details>`;
+}
+
 function menuList(items, withDelete = false) {
   const groups = MOMENTI.map((m) => [m, items.filter((i) => i.momento === m)]).filter(([, l]) => l.length);
   if (!groups.length) return '';
   return groups.map(([m, list]) => `<div class="meal"><h4>${esc(m)}</h4><ul class="list">
     ${list.map((i) => `<li>
-      <span class="grow">${esc(i.alimento)}${i.note ? `<span class="note">${esc(i.note)}</span>` : ''}</span>
+      <span class="grow">${esc(i.alimento)}${i.note ? `<span class="note">${esc(i.note)}</span>` : ''}${alternative(i.alimento)}</span>
       ${i.quantita ? `<span class="qty">${esc(i.quantita)}</span>` : ''}
       ${who(i.persona)}
       ${withDelete ? `<button class="del" data-action="del" data-table="pasti" data-id="${i.id}" aria-label="Elimina ${esc(i.alimento)}">×</button>` : ''}
@@ -636,6 +701,7 @@ function viewPiano() {
     ${menuList(items, true) || `<p class="empty">Nessun pasto per ${GIORNI[g - 1].toLowerCase()}. Aggiungi il primo alimento qui sotto.</p>`}
     ${items.length ? `<div class="row-end"><button class="link" data-action="copia-giorno">Copia ${GIORNI[g - 1].toLowerCase()} su tutta la settimana</button></div>` : ''}
   </section>
+  ${sostitutiviPanel()}
   ${importaPanel()}
   <section class="panel">
     <h2>Aggiungi alimento</h2>

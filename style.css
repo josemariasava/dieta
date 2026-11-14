@@ -263,3 +263,11 @@ textarea { resize: vertical; }
 .inline-check { display: flex; align-items: center; gap: 10px; font-weight: 400; font-size: .95rem; color: var(--ink); }
 .preview { display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
 .scarti { margin: 6px 0 0; padding-left: 18px; }
+
+/* Substitution list */
+.alt { margin-top: 4px; font-size: .85rem; }
+.alt summary { color: var(--accent); cursor: pointer; width: fit-content; }
+.alt p { margin: 4px 0 0; }
+.rules { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.sost { display: grid; gap: 4px; }
+.sost p { margin: 0; }
