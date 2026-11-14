@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '9 · 14 nov 2026';
+const VERSIONE = '10 · 14 nov 2026';
 // Parses numbers typed with either a decimal comma (Italian keyboards) or a dot.
 const dec = (v) => Number(String(v ?? '').trim().replace(',', '.'));
 
@@ -590,12 +590,12 @@ function sostitutiviPanel() {
   </details>`;
 }
 
-function menuList(items, withDelete = false) {
+function menuList(items, withDelete = false, conAlternative = false) {
   const groups = MOMENTI.map((m) => [m, items.filter((i) => i.momento === m)]).filter(([, l]) => l.length);
   if (!groups.length) return '';
   return groups.map(([m, list]) => `<div class="meal"><h4>${esc(m)}</h4><ul class="list">
     ${list.map((i) => `<li>
-      <span class="grow">${esc(i.alimento)}${i.note ? `<span class="note">${esc(i.note)}</span>` : ''}${alternative(i.alimento)}</span>
+      <span class="grow">${esc(i.alimento)}${i.note ? `<span class="note">${esc(i.note)}</span>` : ''}${conAlternative ? alternative(i.alimento) : ''}</span>
       ${i.quantita ? `<span class="qty">${esc(i.quantita)}</span>` : ''}
       ${who(i.persona)}
       ${withDelete ? `<button class="del" data-action="del" data-table="pasti" data-id="${i.id}" aria-label="Elimina ${esc(i.alimento)}">×</button>` : ''}
@@ -698,7 +698,7 @@ function viewPiano() {
         ${options(['tutti', ...PERSONE], state.filtro, (v) => (v === 'tutti' ? 'Tutti e due' : `Solo ${nome(v)}`))}
       </select>
     </div>
-    ${menuList(items, true) || `<p class="empty">Nessun pasto per ${GIORNI[g - 1].toLowerCase()}. Aggiungi il primo alimento qui sotto.</p>`}
+    ${menuList(items, true, true) || `<p class="empty">Nessun pasto per ${GIORNI[g - 1].toLowerCase()}. Aggiungi il primo alimento qui sotto.</p>`}
     ${items.length ? `<div class="row-end"><button class="link" data-action="copia-giorno">Copia ${GIORNI[g - 1].toLowerCase()} su tutta la settimana</button></div>` : ''}
   </section>
   ${sostitutiviPanel()}
