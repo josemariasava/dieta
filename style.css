@@ -271,3 +271,8 @@ textarea { resize: vertical; }
 .rules { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
 .sost { display: grid; gap: 4px; }
 .sost p { margin: 0; }
+
+/* Weight chart: raw weigh-ins faint, 7-day moving average bold */
+.chart .raw { fill: none; stroke-width: 1; opacity: .35; }
+.chart .dot { opacity: .55; }
+.legend-note { flex-basis: 100%; margin: 0; }

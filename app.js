@@ -1,6 +1,6 @@
 'use strict';
 
-const VERSIONE = '10 · 14 nov 2026';
+const VERSIONE = '11 · 19 nov 2026';
 // Parses numbers typed with either a decimal comma (Italian keyboards) or a dot.
 const dec = (v) => Number(String(v ?? '').trim().replace(',', '.'));
 
@@ -427,6 +427,23 @@ function weightAt(p, iso) {
   return w.length ? Number(w[w.length - 1].peso_kg) : null;
 }
 
+// Average of a person's weigh-ins between two ISO dates (inclusive); null if none.
+function mediaPesi(p, from, to) {
+  const v = state.pesate.filter((x) => x.persona === p && x.data >= from && x.data <= to).map((x) => Number(x.peso_kg));
+  return v.length ? sum(v) / v.length : null;
+}
+
+// "Media 7 giorni" line: average of the last 7 days vs the 7 days before (daily weigh-ins swing ±0.5–1 kg).
+function trendSettimana(p) {
+  const oggi = isoToday();
+  const ora = mediaPesi(p, shiftDay(oggi, -6), oggi);
+  if (ora == null) return '';
+  const prima = mediaPesi(p, shiftDay(oggi, -13), shiftDay(oggi, -7));
+  const d = prima == null ? null : Math.round((ora - prima) * 10) / 10;
+  const conf = d == null ? '' : ` · <span class="delta ${d < 0 ? 'good' : d > 0 ? 'bad' : ''}">${segno(d)}</span> rispetto alla settimana prima`;
+  return `<p class="small">Media ultimi 7 giorni: <strong>${kg(ora)}</strong>${conf}</p>`;
+}
+
 function personCard(p) {
   const w = state.pesate.filter((x) => x.persona === p);
   const prof = state.profili[p] || {};
@@ -463,6 +480,7 @@ function personCard(p) {
       <div><p class="label">Dall'inizio</p><p class="delta ${delta < 0 ? 'good' : delta > 0 ? 'bad' : ''}">${segno(delta)}</p></div>
       ${bmi}
     </div>
+    ${trendSettimana(p)}
     ${progress}
     ${settimana}
   </article>`;
@@ -632,15 +650,23 @@ function chart() {
   }
   const xl = [t0, t1].map((t, i) => `<text x="${x(t)}" y="${H - 8}" text-anchor="${i ? 'end' : 'start'}">${fmtDay(new Date(t))}</text>`).join('');
   const tl = targets.map((t) => `<line class="target s-${t.p}" x1="${L}" x2="${W - R}" y1="${y(t.v)}" y2="${y(t.v)}"/>`).join('');
+  const path = (pts) => pts.map((pt, i) => `${i ? 'L' : 'M'}${x(pt.t).toFixed(1)},${y(pt.v).toFixed(1)}`).join(' ');
   const lines = series.map((s) => {
-    const d = s.pts.map((pt, i) => `${i ? 'L' : 'M'}${x(pt.t).toFixed(1)},${y(pt.v).toFixed(1)}`).join(' ');
-    const end = s.pts[s.pts.length - 1];
-    return `<path class="line s-${s.p}" d="${d}"/>
-      ${s.pts.map((pt) => `<circle class="f-${s.p}" cx="${x(pt.t)}" cy="${y(pt.v)}" r="${pt === end ? 5 : 2.5}"/>`).join('')}`;
+    // 7-day moving average at each weigh-in: mean of the weigh-ins in the 7 days ending that day
+    const media = s.pts.map((pt) => {
+      const w = s.pts.filter((q) => q.t <= pt.t && q.t > pt.t - 7 * 864e5);
+      return { t: pt.t, v: sum(w.map((q) => q.v)) / w.length };
+    });
+    const end = media[media.length - 1];
+    return `<path class="raw s-${s.p}" d="${path(s.pts)}"/>
+      ${s.pts.map((pt) => `<circle class="f-${s.p} dot" cx="${x(pt.t)}" cy="${y(pt.v)}" r="2.5"/>`).join('')}
+      <path class="line s-${s.p}" d="${path(media)}"/>
+      <circle class="f-${s.p}" cx="${x(end.t)}" cy="${y(end.v)}" r="5"/>`;
   }).join('');
 
   const legend = series.map((s) => `<span style="--c: var(--${s.p})">${esc(nome(s.p))}</span>`).join('') +
-    (targets.length ? '<span style="--c: var(--muted)">Obiettivo (tratteggiato)</span>' : '');
+    (targets.length ? '<span style="--c: var(--muted)">Obiettivo (tratteggiato)</span>' : '') +
+    '<p class="small muted legend-note">Linea: media degli ultimi 7 giorni · punti: singole pesate</p>';
   return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento del peso"><g class="grid">${grid}</g>${xl}${tl}${lines}</svg></div><div class="legend">${legend}</div>`;
 }
 
